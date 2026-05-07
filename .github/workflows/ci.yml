@@ -76,11 +76,12 @@ jobs:
 
       - name: Run tests
         env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
           MONGODB_URL: mongodb://localhost:27017
           POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/ford_cobalt_test
           SECRET_KEY: test-secret-key
           WEB3_PROVIDER_URL: ""
-        run: pytest --cov=. --cov-report=xml -v
+        run: pytest -p pytest_asyncio.plugin -p pytest_cov --cov=. --cov-report=xml -v
 
   # ── Frontend Build ────────────────────────────────────────────────────────
   frontend:

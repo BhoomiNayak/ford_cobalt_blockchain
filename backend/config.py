@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     MONGODB_DB: str = "ford_cobalt"
 
     # PostgreSQL
-    POSTGRES_URL: str = "postgresql://postgres:postgres@localhost:5432/ford_cobalt_auth"
+    POSTGRES_URL: str = "postgresql+asyncpg://postgres:postgres123@localhost:5432/ford_cobalt"
 
     # Blockchain
     WEB3_PROVIDER_URL: str = "http://localhost:8545"
@@ -41,12 +41,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
-
-        @classmethod
-        def parse_env_var(cls, field_name, raw_val):
-            if field_name == "ALLOWED_ORIGINS":
-                return raw_val
-            return BaseSettings.Config.parse_env_var(field_name, raw_val)
 
 
 settings = Settings()
