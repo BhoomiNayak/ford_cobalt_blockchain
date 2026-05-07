@@ -1,0 +1,129 @@
+version: "3.9"
+
+services:
+  # ── Blockchain Local Node ─────────────────────────────────────────────────
+  hardhat-node:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./contracts:/app
+    command: sh -c "npm install && npx hardhat node --hostname 0.0.0.0"
+    ports:
+      - "8545:8545"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8545',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',method:'eth_chainId',params:[],id:1})}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── Contract Deployer (runs once) ─────────────────────────────────────────
+  deployer:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./contracts:/app
+      - ./backend/abis:/app/../backend/abis
+    command: sh -c "sleep 5 && npm install && npx hardhat run scripts/deploy.js --network localhost"
+    depends_on:
+      hardhat-node:
+        condition: service_healthy
+    environment:
+      - HARDHAT_NETWORK=localhost
+
+  # ── MongoDB ───────────────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: ford_cobalt
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ford_cobalt_auth
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── IPFS ──────────────────────────────────────────────────────────────────
+  ipfs:
+    image: ipfs/kubo:latest
+    restart: unless-stopped
+    ports:
+      - "4001:4001"
+      - "5001:5001"
+      - "8080:8080"
+    volumes:
+      - ipfs_data:/data/ipfs
+
+  # ── Backend ───────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      hardhat-node:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+      POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/ford_cobalt_auth
+      WEB3_PROVIDER_URL: http://hardhat-node:8545
+      IPFS_API_URL: http://ipfs:5001
+    volumes:
+      - ./backend/abis:/app/abis:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ── Frontend ──────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:8000/api/v1
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  mongo_data:
+  pg_data:
+  ipfs_data:
+
+networks:
+  default:
+    name: ford_cobalt_network
