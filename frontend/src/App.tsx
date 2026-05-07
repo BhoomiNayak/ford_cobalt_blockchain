@@ -7,6 +7,7 @@ import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Batches from "./pages/Batches";
 import BatchDetail from "./pages/BatchDetail";
+import NewBatch from "./pages/NewBatch";
 import Mines from "./pages/Mines";
 import Shipments from "./pages/Shipments";
 import CompliancePage from "./pages/Compliance";
@@ -42,6 +43,7 @@ export default function App() {
           >
             <Route index element={<Dashboard />} />
             <Route path="batches" element={<Batches />} />
+            <Route path="batches/new" element={<NewBatch />} />
             <Route path="batches/:batchId" element={<BatchDetail />} />
             <Route path="mines" element={<Mines />} />
             <Route path="shipments" element={<Shipments />} />

@@ -42,5 +42,11 @@ class Settings(BaseSettings):
         env_file = ".env"
         case_sensitive = True
 
+        @classmethod
+        def parse_env_var(cls, field_name, raw_val):
+            if field_name == "ALLOWED_ORIGINS":
+                return raw_val
+            return BaseSettings.Config.parse_env_var(field_name, raw_val)
+
 
 settings = Settings()

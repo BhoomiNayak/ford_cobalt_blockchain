@@ -3,6 +3,7 @@ Batches API routes - create, custody, provenance.
 """
 from datetime import datetime
 from typing import List
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from bson import ObjectId
@@ -16,6 +17,7 @@ from services.blockchain import (
     get_contracts, send_transaction, bytes32_to_hex, hex_to_bytes32,
     purity_to_bps, bps_to_purity
 )
+from config import settings
 from middleware.auth import require_roles, get_current_user
 
 router = APIRouter()
@@ -40,7 +42,7 @@ async def create_batch(
     tx_hash = None
     batch_id = None
 
-    if contracts["batch_tracking"]:
+    if contracts["batch_tracking"] and settings.DEPLOYER_PRIVATE_KEY:
         receipt = await send_transaction(
             contracts["batch_tracking"].functions.createBatch,
             hex_to_bytes32(payload.mine_id),
@@ -54,6 +56,8 @@ async def create_batch(
         events = contracts["batch_tracking"].events.BatchCreated().process_receipt(receipt)
         if events:
             batch_id = bytes32_to_hex(events[0]["args"]["batchId"])
+    else:
+        batch_id = "0x" + uuid.uuid4().hex.ljust(64, "0")
 
     doc = {
         "batch_id": batch_id,
