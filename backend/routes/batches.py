@@ -34,7 +34,7 @@ async def create_batch(
 ):
     """Create a new cobalt batch."""
     # Verify mine exists
-    mine = await db.mines.find_one({"mine_id": payload.mine_id, "status": "ACTIVE"})
+    mine = await db.mines.find_one(_active_mine_lookup_query(payload.mine_id))
     if not mine:
         raise HTTPException(status_code=400, detail="Mine not found or not active")
 
@@ -42,21 +42,25 @@ async def create_batch(
     tx_hash = None
     batch_id = None
 
-    if contracts["batch_tracking"] and settings.DEPLOYER_PRIVATE_KEY:
-        receipt = await send_transaction(
-            contracts["batch_tracking"].functions.createBatch,
-            hex_to_bytes32(payload.mine_id),
-            int(payload.extraction_date.timestamp()),
-            int(payload.weight_kg),
-            purity_to_bps(payload.purity_percent),
-            payload.geolocation,
-            payload.photo_ipfs_hash or "",
-        )
-        tx_hash = receipt.transactionHash.hex()
-        events = contracts["batch_tracking"].events.BatchCreated().process_receipt(receipt)
-        if events:
-            batch_id = bytes32_to_hex(events[0]["args"]["batchId"])
-    else:
+    if contracts["batch_tracking"] and settings.DEPLOYER_PRIVATE_KEY and payload.mine_id.startswith("0x") and len(payload.mine_id) == 66:
+        try:
+            receipt = await send_transaction(
+                contracts["batch_tracking"].functions.createBatch,
+                hex_to_bytes32(payload.mine_id),
+                int(payload.extraction_date.timestamp()),
+                int(payload.weight_kg),
+                purity_to_bps(payload.purity_percent),
+                payload.geolocation,
+                payload.photo_ipfs_hash or "",
+            )
+            tx_hash = receipt.transactionHash.hex()
+            events = contracts["batch_tracking"].events.BatchCreated().process_receipt(receipt)
+            if events:
+                batch_id = bytes32_to_hex(events[0]["args"]["batchId"])
+        except Exception as exc:
+            print(f"Blockchain batch creation skipped: {exc}")
+
+    if not batch_id:
         batch_id = "0x" + uuid.uuid4().hex.ljust(64, "0")
 
     doc = {
@@ -192,3 +196,12 @@ def _doc_to_batch(doc: dict) -> BatchResponse:
         created_at=doc["created_at"],
         tx_hash=doc.get("tx_hash"),
     )
+
+
+def _active_mine_lookup_query(mine_id: str) -> dict:
+    if ObjectId.is_valid(mine_id):
+        return {
+            "$or": [{"mine_id": mine_id}, {"_id": ObjectId(mine_id)}],
+            "status": "ACTIVE",
+        }
+    return {"mine_id": mine_id, "status": "ACTIVE"}

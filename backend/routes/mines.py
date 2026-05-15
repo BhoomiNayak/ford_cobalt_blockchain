@@ -3,6 +3,7 @@ Mines API routes.
 """
 from datetime import datetime
 from typing import List, Optional
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from bson import ObjectId
@@ -12,6 +13,7 @@ from models.schemas import (
 )
 from services.database import get_mongo_db
 from services.blockchain import get_contracts, send_transaction, bytes32_to_hex, hex_to_bytes32
+from config import settings
 from middleware.auth import require_roles
 
 router = APIRouter()
@@ -29,22 +31,28 @@ async def register_mine(
     # On-chain
     tx_hash = None
     mine_id = None
-    if contracts["mine_registry"]:
-        receipt = await send_transaction(
-            contracts["mine_registry"].functions.registerMine,
-            payload.name,
-            payload.country,
-            payload.coordinates,
-            payload.operator_id,
-            payload.operator_address,
-            payload.certifications,
-            payload.metadata_ipfs_hash or "",
-        )
-        tx_hash = receipt.transactionHash.hex()
-        # Parse mineId from event logs
-        events = contracts["mine_registry"].events.MineRegistered().process_receipt(receipt)
-        if events:
-            mine_id = bytes32_to_hex(events[0]["args"]["mineId"])
+    if contracts["mine_registry"] and settings.DEPLOYER_PRIVATE_KEY:
+        try:
+            receipt = await send_transaction(
+                contracts["mine_registry"].functions.registerMine,
+                payload.name,
+                payload.country,
+                payload.coordinates,
+                payload.operator_id,
+                payload.operator_address,
+                payload.certifications,
+                payload.metadata_ipfs_hash or "",
+            )
+            tx_hash = receipt.transactionHash.hex()
+            # Parse mineId from event logs
+            events = contracts["mine_registry"].events.MineRegistered().process_receipt(receipt)
+            if events:
+                mine_id = bytes32_to_hex(events[0]["args"]["mineId"])
+        except Exception as exc:
+            print(f"Blockchain mine registration skipped: {exc}")
+
+    if not mine_id:
+        mine_id = "0x" + uuid.uuid4().hex.ljust(64, "0")
 
     # MongoDB (off-chain mirror)
     doc = {
@@ -69,7 +77,7 @@ async def register_mine(
 @router.get("/{mine_id}", response_model=MineResponse)
 async def get_mine(mine_id: str, db=Depends(get_mongo_db)):
     """Get mine details."""
-    doc = await db.mines.find_one({"mine_id": mine_id})
+    doc = await db.mines.find_one(_mine_lookup_query(mine_id))
     if not doc:
         raise HTTPException(status_code=404, detail="Mine not found")
     return _doc_to_mine(doc)
@@ -102,7 +110,7 @@ async def update_mine_compliance(
     _=Depends(require_roles(["admin", "auditor"])),
 ):
     """Update mine compliance status on-chain and in MongoDB."""
-    doc = await db.mines.find_one({"mine_id": mine_id})
+    doc = await db.mines.find_one(_mine_lookup_query(mine_id))
     if not doc:
         raise HTTPException(status_code=404, detail="Mine not found")
 
@@ -110,20 +118,23 @@ async def update_mine_compliance(
     contracts = get_contracts()
     tx_hash = None
 
-    if contracts["mine_registry"]:
-        receipt = await send_transaction(
-            contracts["mine_registry"].functions.updateMineStatus,
-            hex_to_bytes32(mine_id),
-            status_map[payload.status],
-        )
-        tx_hash = receipt.transactionHash.hex()
-
-        if payload.audit_ipfs_hash:
-            await send_transaction(
-                contracts["mine_registry"].functions.updateAudit,
+    if contracts["mine_registry"] and settings.DEPLOYER_PRIVATE_KEY and mine_id.startswith("0x") and len(mine_id) == 66:
+        try:
+            receipt = await send_transaction(
+                contracts["mine_registry"].functions.updateMineStatus,
                 hex_to_bytes32(mine_id),
-                payload.audit_ipfs_hash,
+                status_map[payload.status],
             )
+            tx_hash = receipt.transactionHash.hex()
+
+            if payload.audit_ipfs_hash:
+                await send_transaction(
+                    contracts["mine_registry"].functions.updateAudit,
+                    hex_to_bytes32(mine_id),
+                    payload.audit_ipfs_hash,
+                )
+        except Exception as exc:
+            print(f"Blockchain mine status update skipped: {exc}")
 
     update = {
         "$set": {
@@ -134,9 +145,15 @@ async def update_mine_compliance(
     if payload.audit_ipfs_hash:
         update["$set"]["metadata_ipfs_hash"] = payload.audit_ipfs_hash
 
-    await db.mines.update_one({"mine_id": mine_id}, update)
+    await db.mines.update_one(_mine_lookup_query(mine_id), update)
 
     return MessageResponse(message="Mine compliance updated", data={"tx_hash": tx_hash})
+
+
+def _mine_lookup_query(mine_id: str) -> dict:
+    if ObjectId.is_valid(mine_id):
+        return {"$or": [{"mine_id": mine_id}, {"_id": ObjectId(mine_id)}]}
+    return {"mine_id": mine_id}
 
 
 def _doc_to_mine(doc: dict) -> MineResponse:

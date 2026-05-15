@@ -1,7 +1,7 @@
 // ─── Mines.tsx ────────────────────────────────────────────────────────────────
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "react-query";
-import { Mountain, Plus, RefreshCw } from "lucide-react";
+import { Mountain, Plus } from "lucide-react";
 import toast from "react-hot-toast";
 import { minesApi } from "../utils/api";
 
@@ -18,6 +18,21 @@ export function Mines() {
       toast.error(e.response?.data?.detail || "Error");
     },
   });
+
+  const updateStatus = useMutation(
+    ({ mineId, status }: { mineId: string; status: string }) =>
+      minesApi.updateCompliance(mineId, { status }),
+    {
+      onSuccess: () => {
+        toast.success("Mine status updated");
+        qc.invalidateQueries("mines");
+        qc.invalidateQueries("active-mines");
+      },
+      onError: (e: any) => {
+        toast.error(e.response?.data?.detail || "Could not update mine");
+      },
+    }
+  );
 
   const STATUS_COLORS: Record<string, string> = { ACTIVE: "#16a34a", PENDING: "#d97706", SUSPENDED: "#dc2626", REVOKED: "#6b7280" };
 
@@ -91,6 +106,15 @@ export function Mines() {
                     <span key={cert} style={{ background: "var(--accent-dim)", color: "var(--accent)", padding: "2px 6px", borderRadius: 4, fontSize: 10, fontWeight: 600 }}>{cert}</span>
                   ))}
                 </div>
+              )}
+              {m.status !== "ACTIVE" && (
+                <button
+                  onClick={() => updateStatus.mutate({ mineId: m.mine_id, status: "ACTIVE" })}
+                  disabled={updateStatus.isLoading}
+                  style={{ marginTop: 14, padding: "7px 12px", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 7, cursor: "pointer", fontWeight: 600, fontSize: 12 }}
+                >
+                  Mark Active
+                </button>
               )}
             </div>
           );
